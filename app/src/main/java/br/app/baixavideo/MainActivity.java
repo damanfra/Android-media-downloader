@@ -36,7 +36,8 @@ public class MainActivity extends Activity {
 
     private EditText input;
     private Button btnPaste, btnFetch, btnVideo, btnAudio, btnCancel, btnOpen;
-    private TextView info, qualityLabel, status;
+    private TextView info, qualityLabel, nameLabel, status;
+    private EditText fileName;
     private Spinner quality;
     private ProgressBar progress;
 
@@ -137,6 +138,14 @@ public class MainActivity extends Activity {
         info.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(info, lp(20));
 
+        nameLabel = text("Nome do arquivo (a extensão .mp4 ou .mp3 é colocada automaticamente)", 13);
+        root.addView(nameLabel, lp(12));
+        fileName = new EditText(this);
+        fileName.setSingleLine(true);
+        fileName.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        fileName.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        root.addView(fileName, lp(0));
+
         qualityLabel = text("Qualidade do vídeo", 13);
         root.addView(qualityLabel, lp(12));
         quality = new Spinner(this);
@@ -220,6 +229,8 @@ public class MainActivity extends Activity {
         btnVideo.setVisibility(hasVideo ? View.VISIBLE : View.GONE);
         btnAudio.setVisibility(show && current != null && current.audio != null ? View.VISIBLE : View.GONE);
         info.setVisibility(vis);
+        nameLabel.setVisibility(vis);
+        fileName.setVisibility(vis);
     }
 
     private void setBusy(boolean b) {
@@ -229,6 +240,7 @@ public class MainActivity extends Activity {
         btnVideo.setEnabled(!b);
         btnAudio.setEnabled(!b);
         quality.setEnabled(!b);
+        if (fileName != null) fileName.setEnabled(!b);
         input.setEnabled(!b);
         if (b) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -271,6 +283,7 @@ public class MainActivity extends Activity {
                         public void run() {
                             current = mi;
                             info.setText(mi.title + "\n" + mi.source);
+                            fileName.setText(Downloader.sanitize(mi.title));
                             List<String> labels = new ArrayList<>();
                             for (MediaInfo.Option o : mi.video) labels.add(o.label);
                             ArrayAdapter<String> ad = new ArrayAdapter<>(MainActivity.this,
@@ -299,6 +312,8 @@ public class MainActivity extends Activity {
     private void startDownload(final boolean audioOnly) {
         final MediaInfo mi = current;
         if (mi == null || busy) return;
+        final String chosenName = fileName.getText().toString();
+        hideKeyboard();
         final MediaInfo.Option opt = audioOnly ? mi.audio : mi.video.get(Math.max(0, quality.getSelectedItemPosition()));
         if (opt == null) return;
         cancel = new AtomicBoolean(false);
@@ -356,7 +371,7 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 try {
-                    final Downloader.Result r = Downloader.run(getApplicationContext(), mi, opt, audioOnly, myCancel, listener);
+                    final Downloader.Result r = Downloader.run(getApplicationContext(), mi, opt, audioOnly, chosenName, myCancel, listener);
                     ui.post(new Runnable() {
                         @Override
                         public void run() {

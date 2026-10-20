@@ -39,14 +39,14 @@ final class Downloader {
 
     private Downloader() {}
 
-    static Result run(Context ctx, MediaInfo mi, MediaInfo.Option o, boolean audioOnly,
+    static Result run(Context ctx, MediaInfo mi, MediaInfo.Option o, boolean audioOnly, String fileName,
                       AtomicBoolean cancel, Listener l) throws Exception {
         File dir = ctx.getCacheDir();
         File v = new File(dir, "v.tmp"), a = new File(dir, "a.tmp"), out = new File(dir, "out.tmp");
         v.delete();
         a.delete();
         out.delete();
-        String base = sanitize(mi.title);
+        String base = sanitize(fileName == null || fileName.trim().isEmpty() ? mi.title : fileName);
         try {
             if (audioOnly) {
                 l.onStage("Baixando…");
@@ -58,7 +58,10 @@ final class Downloader {
             if (o.audioUrl == null) {
                 l.onStage("Baixando vídeo…");
                 Net.download(o.videoUrl, o.videoLen, mi.headers, v, cancel, l, 0, o.videoLen);
-                return save(ctx, v, base + ".mp4", "video/mp4");
+                l.onStage("Finalizando…");
+                // remuxa (sem recodificar) para o MP4 levar a data de agora, não a da postagem
+                mux(out, new File[]{v, v}, new String[]{"video/", "audio/?"});
+                return save(ctx, out, base + ".mp4", "video/mp4");
             }
             long total = (o.videoLen > 0 && o.audioLen > 0) ? o.videoLen + o.audioLen : 0;
             l.onStage("Baixando vídeo…");
@@ -179,6 +182,14 @@ final class Downloader {
     /** Copia, sem recodificar, a primeira trilha de cada arquivo cujo MIME começa com o prefixo dado. */
     static void mux(File out, File[] files, String[] prefixes) throws IOException {
         int n = files.length;
+        boolean[] optional = new boolean[n];
+        prefixes = prefixes.clone();
+        for (int i = 0; i < n; i++) {
+            if (prefixes[i].endsWith("?")) {
+                optional[i] = true;
+                prefixes[i] = prefixes[i].substring(0, prefixes[i].length() - 1);
+            }
+        }
         MediaExtractor[] ex = new MediaExtractor[n];
         int[] dst = new int[n];
         int maxBuf = 4 * 1024 * 1024;
@@ -194,6 +205,11 @@ final class Downloader {
                         track = j;
                         break;
                     }
+                }
+                if (track < 0 && optional[i]) {
+                    ex[i].release();
+                    ex[i] = null;
+                    continue;
                 }
                 if (track < 0) {
                     throw new IOException(prefixes[i].startsWith("audio") ? "Esse vídeo não tem áudio." : "Trilha de vídeo não encontrada.");
@@ -213,7 +229,7 @@ final class Downloader {
                 int pick = -1;
                 long best = Long.MAX_VALUE;
                 for (int i = 0; i < n; i++) {
-                    if (done[i]) continue;
+                    if (done[i] || ex[i] == null) continue;
                     long t = ex[i].getSampleTime();
                     if (t < 0) {
                         done[i] = true;
@@ -253,6 +269,7 @@ final class Downloader {
         cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
         cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
         cv.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        cv.put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis());
         Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
         if (uri == null) throw new IOException("Não consegui criar o arquivo em Downloads.");
         try (InputStream in = new FileInputStream(f); OutputStream os = cr.openOutputStream(uri)) {
@@ -266,12 +283,13 @@ final class Downloader {
         }
         cv.clear();
         cv.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        cv.put(MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis());
         cr.update(uri, cv, null, null);
         return new Result(uri, mime, name);
     }
 
-    private static String sanitize(String s) {
-        String t = s == null ? "" : s.replaceAll("[\\\\/:*?\"<>|\\n\\r\\t]", "_").replaceAll("\\s+", " ").trim();
+    static String sanitize(String s) {
+        String t = s == null ? "" : s.trim().replaceAll("(?i)\\.(mp3|mp4|m4a)$", "").replaceAll("[\\\\/:*?\"<>|\\n\\r\\t]", "_").replaceAll("\\s+", " ").trim();
         if (t.length() > 80) t = t.substring(0, 80).trim();
         return t.isEmpty() ? "video_" + System.currentTimeMillis() : t;
     }
