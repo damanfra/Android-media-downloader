@@ -1,0 +1,37 @@
+plugins { id 'com.android.application' }
+
+def buildNumber = (project.findProperty('buildNumber') ?: '1') as Integer
+// Chave de assinatura vem dos Secrets do GitHub (ver README). Sem ela, usa a chave de debug.
+def keystorePath = System.getenv('SIGNING_KEYSTORE_PATH')
+
+android {
+    namespace 'br.app.baixavideo'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'br.app.baixavideo'
+        minSdk 29
+        targetSdk 34
+        versionCode buildNumber
+        versionName "1.0.${buildNumber}"
+    }
+    signingConfigs {
+        if (keystorePath) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv('SIGNING_STORE_PASSWORD')
+                keyAlias System.getenv('SIGNING_KEY_ALIAS')
+                keyPassword System.getenv('SIGNING_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
