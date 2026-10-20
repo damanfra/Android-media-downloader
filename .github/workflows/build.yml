@@ -34,7 +34,13 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon -PbuildNumber=${{ github.run_number }}
+        run: |
+          set -o pipefail
+          if ! gradle assembleRelease --no-daemon -PbuildNumber=${{ github.run_number }} 2>&1 | tee build.log; then
+            { echo '### Erros do build'; echo '```'; grep -iE "error|what went wrong|failed|exception" -A4 build.log | head -150; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            grep -iE "error:|what went wrong" -A1 build.log | head -10 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
       - name: Renomear APK
         run: cp app/build/outputs/apk/release/app-release.apk BaixaVideo-v1.0.${{ github.run_number }}.apk
       - uses: actions/upload-artifact@v4

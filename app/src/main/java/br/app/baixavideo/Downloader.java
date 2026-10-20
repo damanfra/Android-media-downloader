@@ -19,7 +19,7 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Baixa, junta/extrai trilhas com o MediaMuxer nativo e salva em Download/BaixaVideo. */
+/** Baixa, junta trilhas com o MediaMuxer nativo (ou converte para MP3) e salva na pasta Download. */
 final class Downloader {
     interface Listener extends Net.Progress {
         void onStage(String text);
@@ -51,9 +51,9 @@ final class Downloader {
             if (audioOnly) {
                 l.onStage("Baixando…");
                 Net.download(o.audioUrl, o.audioLen, mi.headers, a, cancel, l, 0, o.audioLen);
-                l.onStage("Extraindo o áudio…");
-                mux(out, new File[]{a}, new String[]{"audio/"});
-                return save(ctx, out, base + ".m4a", "audio/mp4");
+                l.onStage("Convertendo para MP3…");
+                toMp3(a, out, cancel, l);
+                return save(ctx, out, base + ".mp3", "audio/mpeg");
             }
             if (o.audioUrl == null) {
                 l.onStage("Baixando vídeo…");
@@ -72,6 +72,107 @@ final class Downloader {
             v.delete();
             a.delete();
             out.delete();
+        }
+    }
+
+    /** Decodifica a trilha de áudio com o MediaCodec do Android e codifica em MP3 (LAME, 192 kbps). */
+    static void toMp3(File in, File out, AtomicBoolean cancel, Listener l) throws IOException {
+        MediaExtractor ex = new MediaExtractor();
+        MediaCodec dec = null;
+        long enc = 0;
+        try (OutputStream os = new java.io.BufferedOutputStream(new java.io.FileOutputStream(out), 256 * 1024)) {
+            ex.setDataSource(in.getPath());
+            MediaFormat fmt = null;
+            for (int j = 0; j < ex.getTrackCount(); j++) {
+                MediaFormat f = ex.getTrackFormat(j);
+                String mime = f.getString(MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("audio/")) {
+                    ex.selectTrack(j);
+                    fmt = f;
+                    break;
+                }
+            }
+            if (fmt == null) throw new IOException("Esse vídeo não tem áudio.");
+            long durationUs = fmt.containsKey(MediaFormat.KEY_DURATION) ? fmt.getLong(MediaFormat.KEY_DURATION) : 0;
+            int rate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+            int ch = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+
+            dec = MediaCodec.createDecoderByType(fmt.getString(MediaFormat.KEY_MIME));
+            dec.configure(fmt, null, null, 0);
+            dec.start();
+
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            short[] pcm = new short[0];
+            byte[] mp3 = new byte[0];
+            boolean inDone = false;
+            int encCh = 0;
+            while (true) {
+                if (cancel.get()) throw new Net.CancelledException();
+                if (!inDone) {
+                    int ii = dec.dequeueInputBuffer(10000);
+                    if (ii >= 0) {
+                        ByteBuffer b = dec.getInputBuffer(ii);
+                        int size = b == null ? -1 : ex.readSampleData(b, 0);
+                        if (size < 0) {
+                            dec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            inDone = true;
+                        } else {
+                            dec.queueInputBuffer(ii, 0, size, ex.getSampleTime(), 0);
+                            ex.advance();
+                        }
+                    }
+                }
+                int oi = dec.dequeueOutputBuffer(info, 10000);
+                if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    MediaFormat of = dec.getOutputFormat();
+                    rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+                    ch = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+                } else if (oi >= 0) {
+                    ByteBuffer ob = dec.getOutputBuffer(oi);
+                    if (ob != null && info.size > 0) {
+                        if (enc == 0) {
+                            encCh = Math.min(ch, 2);
+                            enc = Mp3Encoder.init(rate, encCh, 192);
+                            if (enc == 0) throw new IOException("Não consegui iniciar o codificador MP3.");
+                        }
+                        ob.position(info.offset);
+                        ob.limit(info.offset + info.size);
+                        java.nio.ShortBuffer sb = ob.order(java.nio.ByteOrder.nativeOrder()).asShortBuffer();
+                        int count = sb.remaining();
+                        int frames = count / ch;
+                        if (pcm.length < count) pcm = new short[count];
+                        sb.get(pcm, 0, count);
+                        if (ch > 2) { // reduz para estéreo usando os dois primeiros canais
+                            for (int f = 0; f < frames; f++) {
+                                pcm[2 * f] = pcm[f * ch];
+                                pcm[2 * f + 1] = pcm[f * ch + 1];
+                            }
+                        }
+                        int need = frames * 5 / 4 + 7200;
+                        if (mp3.length < need) mp3 = new byte[need];
+                        int n = Mp3Encoder.encode(enc, pcm, frames, encCh, mp3);
+                        if (n < 0) throw new IOException("Erro no codificador MP3 (" + n + ").");
+                        os.write(mp3, 0, n);
+                        if (durationUs > 0) l.onProgress(Math.min(info.presentationTimeUs, durationUs), durationUs);
+                    }
+                    dec.releaseOutputBuffer(oi, false);
+                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
+                }
+            }
+            if (enc == 0) throw new IOException("O áudio veio vazio.");
+            if (mp3.length < 7200) mp3 = new byte[7200];
+            int n = Mp3Encoder.flush(enc, mp3);
+            if (n > 0) os.write(mp3, 0, n);
+        } finally {
+            if (enc != 0) Mp3Encoder.close(enc);
+            if (dec != null) {
+                try {
+                    dec.stop();
+                } catch (Exception ignored) {
+                }
+                dec.release();
+            }
+            ex.release();
         }
     }
 
@@ -150,7 +251,7 @@ final class Downloader {
         ContentValues cv = new ContentValues();
         cv.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         cv.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-        cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BaixaVideo");
+        cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
         cv.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri uri = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
         if (uri == null) throw new IOException("Não consegui criar o arquivo em Downloads.");

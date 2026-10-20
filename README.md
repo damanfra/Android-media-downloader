@@ -1,11 +1,11 @@
 # BaixaVídeo
 
-App Android (Java puro, sem dependências) que recebe um link do X/Twitter ou do YouTube e baixa o vídeo (.mp4) ou só o áudio (.m4a) para `Download/BaixaVideo`.
+App Android que recebe um link do X/Twitter ou do YouTube e baixa o vídeo (.mp4) ou só o áudio (.mp3) direto na pasta `Download` do Android.
 
 - Aceita o link colado ou via **Compartilhar** nos apps do X e do YouTube.
 - X: usa o endpoint público de embed (`cdn.syndication.twimg.com`) e lista as qualidades MP4.
 - YouTube: consulta a API InnerTube com clientes ANDROID_VR e IOS; junta vídeo H.264 + áudio AAC com o `MediaMuxer` nativo, sem recodificar.
-- Áudio: extrai a trilha AAC para .m4a, também sem recodificar.
+- Áudio: decodifica com o MediaCodec do Android e codifica em MP3 a 192 kbps com o [LAME](https://lame.sourceforge.io/) (LGPL). O código-fonte do LAME é baixado e compilado com o NDK durante o build.
 - Android 10 ou superior; não pede permissão de armazenamento.
 
 ## Gerar o APK
@@ -23,7 +23,7 @@ App Android (Java puro, sem dependências) que recebe um link do X/Twitter ou do
 
 Para gerar a chave (no PC, com JDK): `keytool -genkeypair -keystore baixavideo.keystore -alias baixavideo -keyalg RSA -keysize 2048 -validity 36500`, e depois `base64 -w0 baixavideo.keystore` (Linux) ou `[Convert]::ToBase64String([IO.File]::ReadAllBytes("baixavideo.keystore"))` (PowerShell). Nunca faça commit do keystore.
 
-**No PC:** abra a pasta no Android Studio e use *Build → Build APK(s)*, ou rode `gradle assembleDebug` com o Android SDK instalado.
+**No PC:** abra a pasta no Android Studio (com NDK e CMake instalados pelo SDK Manager) e use *Build → Build APK(s)*, ou rode `gradle assembleDebug`.
 
 ## Se o YouTube parar de funcionar
 

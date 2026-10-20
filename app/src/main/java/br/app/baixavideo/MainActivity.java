@@ -144,7 +144,7 @@ public class MainActivity extends Activity {
 
         btnVideo = button("Baixar vídeo (.mp4)");
         root.addView(btnVideo, lp(12));
-        btnAudio = button("Baixar só o áudio (.m4a)");
+        btnAudio = button("Baixar só o áudio (.mp3)");
         root.addView(btnAudio, lp(4));
 
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -321,7 +321,8 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         setStatus(text);
-                        if (!text.startsWith("Baixando")) progress.setIndeterminate(true);
+                        lastPermille = -1;
+                        progress.setIndeterminate(true);
                     }
                 });
             }
@@ -338,7 +339,11 @@ public class MainActivity extends Activity {
                         if (permille >= 0) {
                             progress.setIndeterminate(false);
                             progress.setProgress(permille);
-                            setStatus(stage + "  " + (permille / 10) + "%  (" + (done / 1048576) + " / " + (total / 1048576) + " MB)");
+                            if (stage.startsWith("Baixando")) {
+                                setStatus(stage + "  " + (permille / 10) + "%  (" + (done / 1048576) + " / " + (total / 1048576) + " MB)");
+                            } else {
+                                setStatus(stage + "  " + (permille / 10) + "%");
+                            }
                         } else {
                             setStatus(stage + "  " + (done / 1048576) + " MB");
                         }
@@ -356,7 +361,7 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             lastSaved = r;
-                            finishDownload("Pronto! Salvo em Download/BaixaVideo/" + r.name);
+                            finishDownload("Pronto! Salvo em Download/" + r.name);
                             btnOpen.setVisibility(View.VISIBLE);
                         }
                     });
@@ -388,7 +393,7 @@ public class MainActivity extends Activity {
         try {
             startActivity(i);
         } catch (ActivityNotFoundException e) {
-            setStatus("Nenhum app para abrir esse arquivo. Ele está em Download/BaixaVideo.");
+            setStatus("Nenhum app para abrir esse arquivo. Ele está na pasta Download.");
         }
     }
 
